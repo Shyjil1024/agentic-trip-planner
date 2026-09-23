@@ -1,0 +1,529 @@
+# Agentic Trip Planner — 10/10 Blueprint
+### A Stateful, Multi-Agent Travel Decision & Orchestration Platform
+
+> "A stateful, multi-agent travel decision system that combines real-world data, constraint optimization, validation, and event-driven replanning to continuously maintain a feasible, personalized trip."
+
+---
+
+## 1. Executive Summary
+
+Most "AI travel planners" in 2026 are generation engines: they turn a prompt into an itinerary and stop there. This blueprint describes a different kind of system — an **agentic decision and orchestration platform** that treats trip planning as a constraint-satisfaction problem with live inputs, not a one-shot text-generation task.
+
+The system understands a natural-language goal ("I wanna go to Ladakh"), collects only the missing information it actually needs, delegates research to specialist agents, optimizes the itinerary against explicit hard and soft constraints, **independently validates** its own output, and **replans automatically** when real-world conditions change — a flight delay, a weather shift, a cancelled hotel. A human stays in the loop for every booking or payment decision.
+
+This document is the implementation-grade companion to the accompanying presentation. It contains the architecture, data model, algorithms, interfaces, evaluation framework, and roadmap needed to build the system, plus the market research that grounds the product's positioning.
+
+---
+
+## 2. The Problem
+
+Trip planning fails today for four structural reasons, not a lack of content:
+
+1. **Fragmented data.** Flights, trains, hotels, weather, and points of interest live in separate systems with no shared state. Every planning tool re-solves the "what do I actually know so far" problem from scratch.
+2. **Manual constraint-checking.** Budget ceilings, date windows, transfer limits, and preferences live in the traveler's head. Nothing checks a generated plan against them automatically.
+3. **No independent validation.** Generated itineraries look complete (they have days, times, and hotel names) but are rarely checked for feasibility — overlapping activities, impossible check-in times, or unreachable transfers slip through.
+4. **Static plans.** The moment a flight is delayed or the weather turns, the itinerary is stale, and no system tells the traveler what needs to change.
+
+The opportunity is not "generate a nicer itinerary." It's **closing the loop**: plan → validate → monitor → replan, continuously.
+
+---
+
+## 3. Market Research (2026)
+
+Researched via official product sources and reputable technology press as of September 2026. Claims are marked **[Verified]** (official source), **[Analysis]** (third-party industry commentary), or **[Not documented]** (no public evidence either way).
+
+| Product | What it currently offers |
+|---|---|
+| **Google (AI Mode / Canvas for Travel)** | **[Verified]** Conversational itinerary building inside Search's AI Mode ("Canvas"), assembling plans from natural-language prompts and pulling live data from Google Flights, Google Hotels, and Maps reviews/photos. Google is expanding **agentic booking** (restaurants, tickets, appointments) directly from Search, with flights/hotels booking described as "coming soon." Gemini Gems (custom AI mini-apps) are being made free to all users, including for travel use cases. Google Photos can now identify locations from screenshots and feed them into itinerary building. |
+| **Mindtrip** | **[Verified/Analysis]** Chat-over-map planner built on an 11M+ point-of-interest database. In 2026 it launched **Mindtrip Flights**, an agentic flight-search-to-booking flow built with Sabre and PayPal — described by industry reviewers as the first AI travel tool offering end-to-end flight search, comparison, and in-chat booking. Also ships a "Magic Camera" for real-time landmark ID and sign/menu translation, plus booking links through Priceline and Viator. |
+| **Layla** | **[Analysis]** Conversational discovery-to-booking assistant; reviewers rank it for "live pricing with a human backup" and deal-hunting (PriceLock). |
+| **Booking.com AI Trip Planner** | **[Analysis]** Conversational planning with a natural-language stay filter, plus AI-generated summaries of large volumes of property reviews. |
+| **Expedia ("Romie")** | **[Analysis]** Turns a group chat into trip options; described in press coverage as watching for delays and weather and helping with rebooking — still rolling out as of 2026. |
+| **Tripadvisor AI Trip Builder** | **[Analysis]** Builds itineraries quickly from Tripadvisor's review corpus; reviewers caution its AI review summaries should be treated carefully. |
+| **Hopper** | **[Analysis]** Focused on price-timing prediction (buy now vs. wait) rather than itinerary construction. |
+| **Wanderlog** | **[Analysis]** Collaborative, map-based itinerary and expense tool with an AI assistant layer for suggestions along a route. |
+
+**Cross-cutting 2026 finding [Analysis]:** industry reviewers consistently note that despite "agentic" branding, most tools still **hand off to a human for the actual payment step** — full autonomous booking-and-pay is the exception, not the norm, and every reviewed product treats it as an emerging, partial capability rather than a solved one.
+
+---
+
+## 4. Competitive Landscape
+
+| Capability | Mindtrip | Layla | Google AI Mode | Our Platform |
+|---|---|---|---|---|
+| Natural-language planning | Yes | Yes | Yes | Yes |
+| Multi-agent orchestration (explicit, stateful) | Not documented | Not documented | Not documented | **Yes** |
+| Live transport + hotel data | Yes | Yes | Yes | Yes |
+| Constraint-solver optimization | Not documented | Not documented | Not documented | **Yes** |
+| Independent validation pass | Not documented | Not documented | Not documented | **Yes** |
+| Event-driven replanning | Partial (Romie-style disruption watching is a different product) | Not documented | Not documented | **Yes** |
+| What-if simulation | Not documented | Not documented | Not documented | **Yes** |
+| Explainable trade-offs (cost/time/experience) | Not documented | Not documented | Not documented | **Yes** |
+| User preference memory | Yes (personalization) | Yes | Partial (account-linked) | **Yes (scoped, 3-tier)** |
+| Human approval before booking/payment | Partial | Partial | Partial | **Yes, enforced by design** |
+
+"Not documented" means the capability was not found in official product materials or independent reviews as of September 2026 — it is not a claim that competitors lack it, only that it isn't publicly evidenced.
+
+---
+
+## 5. Product Opportunity
+
+The gap isn't itinerary *generation* — every competitor does that well. The gap is **decisions under constraints, kept correct over time**:
+
+- Cross-domain reasoning is shallow: transport, hotels, weather, and budget are rarely traded off against each other explicitly inside one plan.
+- Plans are not independently validated before being shown to the user.
+- Nothing watches a booked trip — delays, cancellations, and weather changes don't trigger replanning in most tools.
+- Trade-offs are hidden: tools return one plan, not cost-optimized / time-optimized / experience-optimized alternatives with an explanation of what was traded away.
+
+This is the wedge for an agentic orchestration layer rather than another single-shot generator.
+
+---
+
+## 6. Requirements
+
+### 6.1 Functional
+- Understand an open-ended travel goal from one sentence.
+- Obtain the user's current location **only** via explicit device/browser permission — never assumed or inferred.
+- Progressively collect only the missing information needed, one highest-value question at a time (never a long form).
+- Delegate to specialist agents for transport, accommodation, activities, weather, budget, and risk.
+- Produce a feasible day-by-day itinerary honoring hard constraints and scoring soft preferences.
+- Independently validate every generated itinerary before it is shown.
+- Replan automatically (partial, not full regeneration) on validation failure or live event.
+- Support "what-if" simulations without mutating the committed plan.
+- Require explicit human approval before any booking or payment.
+
+### 6.2 Non-functional
+- Deterministic arithmetic and calendar/time logic (no LLM math).
+- Every specialist agent call returns a structured, confidence-scored, source-attributed contract.
+- Full trace observability per trip, per agent, per tool call.
+- Graceful degradation when a provider API is down or data is stale.
+
+### 6.3 Candidate requirement fields (collected progressively, not all at once)
+Starting location · destination · travel dates or flexible range · duration · traveler count (adults/children) · budget & currency · transport mode preferences · maximum transfers · preferred departure time · accommodation type & budget · food preferences · activities/interests · travel pace · must-visit places · places to avoid · accessibility needs · scenic-route preference · weather sensitivity · risk tolerance.
+
+---
+
+## 7. User Journey — "I wanna go to Ladakh"
+
+1. **Intent captured** — destination known, everything else unknown.
+2. **Location permission requested** — *"I can use your current location as the starting point. Shall I use it?"* The LLM never accesses GPS directly; the browser/OS requests permission and sends coordinates to the backend only after explicit approval.
+3. **Progressive interview** — the Orchestrator asks the single highest-value missing question each turn (dates → duration → budget → travelers → preferences…), stopping as soon as enough is known to start research.
+4. **Parallel specialist execution** — Transport, Accommodation, Activities, Weather, Budget, and Risk agents run concurrently once inputs are sufficient.
+5. **Itinerary synthesis** — the Itinerary Planning Agent merges every specialist's output into one candidate plan.
+6. **Optimization** — a constraint solver scores candidates against the objective function (Section 19).
+7. **Validation** — the Validation Agent independently checks the candidate; failures trigger the Replanning Agent for a targeted fix.
+8. **Presentation** — the user sees a feasible itinerary with cost/time/experience trade-offs, not a single "best" answer.
+9. **Live phase** — once the trip starts, the Orchestrator monitors events (e.g., `FLIGHT_DELAYED`) and reruns only the affected slice of the plan.
+
+---
+
+## 8. Architecture Overview
+
+```
+                         ┌───────────────────────────┐
+                         │      Orchestrator Agent     │
+                         │  (LangGraph state machine)  │
+                         └──────────────┬──────────────┘
+              ┌───────────────┬─────────┼─────────┬───────────────┐
+        Requirement       Location   Transport  Accommodation   Activities
+         Interview                                                  │
+              │               │          │            │             │
+          Weather           Budget    Risk&Safety  Itinerary     Validation
+                                                     Planner          │
+                                                                 Replanning
+                                                                      │
+                                                                  Booking
+                                                                  (gated)
+```
+
+- **Pattern:** graph / state-machine (LangGraph), not a single autonomous prompt. Every transition between agents is explicit, inspectable, and independently testable.
+- **Stack:** Python, FastAPI, LangGraph, Pydantic, PostgreSQL, Redis, MCP, React/Next.js frontend.
+- **Core principle:** *agents reason; tools retrieve and calculate.* No LLM performs arithmetic, distance math, or authoritative data retrieval — those are deterministic services behind MCP tool contracts.
+
+---
+
+## 9. Agent Responsibilities
+
+| # | Agent | Responsibility | Never does |
+|---|---|---|---|
+| 1 | Requirement Interview | NL → structured requirements: known, missing, hard constraints, soft preferences, ambiguities. Picks next highest-value question. | Doesn't guess unstated hard constraints. |
+| 2 | Location | Receives device-approved coordinates, reverse-geocodes, checks accuracy/staleness, asks for confirmation. | Never accesses GPS itself. |
+| 3 | Transport | Flights/trains/buses/cars/bikes/taxis/mixed — cost, duration, transfers, times, reliability, baggage, buffers. | Never invents schedules or prices. |
+| 4 | Accommodation | Hotels/hostels/homestays/resorts — price, availability, location, ratings, cancellation, check-in/out. | Never hallucinates current price or availability. |
+| 5 | Activities/Places | Attractions, restaurants, nature, culture, adventure, photography spots, events, hours, clustering. | Never ignores opening-hours conflicts. |
+| 6 | Weather & Season | Temperature, precipitation, wind, visibility, severe-weather flags, seasonal accessibility. | Never treats weather as decorative text — it feeds itinerary re-sequencing. |
+| 7 | Budget | Full category breakdown: transport, lodging, food, local transit, activities, tickets, insurance, buffer, misc. | Never performs the arithmetic itself — calls the deterministic budget service. |
+| 8 | Risk & Safety | Weather risk, transport delay risk, remote-area risk, transfer-gap risk, document requirements, emergency planning. | Never gives unsupported medical advice. |
+| 9 | Itinerary Planner | Synthesizes all agent outputs into one feasible day-by-day plan honoring hard/soft constraints. | Never skips the validation step. |
+| 10 | Validation | Independently checks dates, times, durations, check-in windows, hours, budget, weather fit, geography, overlaps, buffers, data freshness. | Never trusts the planner's own self-report. |
+| 11 | Replanning | On failure or live event: impact analysis → identify affected items → repair only those → re-validate. | Never regenerates the whole trip unnecessarily. |
+| 12 | Booking | Prepares booking actions for later-stage execution. | Never books, pays, or cancels without explicit human approval. |
+
+---
+
+## 10. Orchestration
+
+The Orchestrator is the only agent with a global view of `TripSession` state. Its responsibilities:
+
+- Interpret intent and maintain structured state across turns.
+- Compute the missing-requirement set and choose the next question (Section 17).
+- Fan out specialist tasks in parallel once minimum viable inputs exist, and fan them back in.
+- Resolve conflicts between agent outputs (e.g., Transport prefers a red-eye that Risk flags as high-fatigue).
+- Trigger itinerary generation → validation → replanning as a closed loop.
+- Own live-trip monitoring and event dispatch after the trip is booked.
+
+## 11. LangGraph Design
+
+Represent the system as a directed graph of nodes (agents/tools) and conditional edges (routing logic) over a shared, typed state object (`TripSession`).
+
+```
+START → interview_node ⇄ (loop until requirements sufficient)
+      → parallel_research (transport, accommodation, activities, weather)
+      → budget_node → risk_node
+      → itinerary_planner_node
+      → validation_node
+          ├─ valid → present_node → END (or → monitoring_node if live)
+          └─ invalid → replanning_node → validation_node (bounded retries)
+monitoring_node → (on event) → impact_analysis_node → replanning_node → validation_node
+```
+
+- Each node is a pure function over `TripSession` + node-local input, returning a state delta — this keeps every step replayable and unit-testable.
+- Conditional edges are simple predicate functions (e.g., `requirements_sufficient(state) -> bool`), not further LLM calls, wherever the predicate is deterministic.
+- Bounded retries (e.g., max 3 replan cycles) prevent infinite validate/replan loops; on exhaustion, surface the unresolved issue to the user instead of looping silently.
+
+## 12. MCP Architecture
+
+Tools are exposed through MCP (or an equivalent clean tool abstraction) so agents call capabilities, not raw APIs:
+
+```
+get_current_location   reverse_geocode        search_routes
+search_flights         search_trains          search_buses
+search_hotels          search_places          get_weather
+get_forecast           get_exchange_rate       calculate_route_time
+```
+
+Principle: **agents reason, tools retrieve and calculate.** Anything with a deterministic right answer (distance, elapsed time, currency conversion, arithmetic) is a tool, never an LLM completion.
+
+## 13. Tool Interfaces
+
+Every tool returns the same structured contract so the Orchestrator can reason about reliability uniformly:
+
+```json
+{
+  "status": "success",
+  "confidence": 0.91,
+  "data": { "...": "..." },
+  "sources": ["provider-name", "timestamp"],
+  "assumptions": [],
+  "warnings": []
+}
+```
+
+`status` ∈ `{success, partial, failed}`. A `partial` result with `warnings` populated is a first-class case the Orchestrator must handle — it should never silently upgrade "partial" to "success."
+
+---
+
+## 14. State Model
+
+```python
+class TripSession(BaseModel):
+    trip_id: str
+    user_id: str
+    origin: Optional[Location]
+    destination: str
+    dates: Optional[DateRange]
+    duration_days: Optional[int]
+    travelers: TravelerCount
+    budget: Optional[Budget]
+    transport_preferences: TransportPrefs
+    accommodation_preferences: AccommodationPrefs
+    activities: list[str]
+    constraints: Constraints          # hard + soft, see Section 18
+    current_location: Optional[GeoPoint]
+    status: TripStatus                # interviewing | researching | planning
+                                       # | validating | replanning | live | completed
+
+class AgentTask(BaseModel):
+    task_id: str
+    trip_id: str
+    agent_name: str
+    status: Literal["pending", "running", "success", "failed"]
+    input: dict
+    output: Optional[dict]
+    error: Optional[str]
+    started_at: datetime
+    completed_at: Optional[datetime]
+    latency_ms: Optional[int]
+
+class ItineraryDay(BaseModel):
+    date: date
+    activities: list[ActivityBlock]
+    travel_time_minutes: int
+    estimated_cost: Money
+    weather: Optional[WeatherSnapshot]
+```
+
+## 15. Database Schema (relational core)
+
+- `trips(trip_id PK, user_id FK, destination, origin, status, created_at, updated_at)`
+- `trip_requirements(trip_id FK, field_name, value, is_hard_constraint, source)`
+- `agent_tasks(task_id PK, trip_id FK, agent_name, status, input JSONB, output JSONB, latency_ms, started_at, completed_at)`
+- `itineraries(itinerary_id PK, trip_id FK, version, variant, is_valid, created_at)` — `variant` ∈ `{cost_optimized, time_optimized, experience_optimized}`
+- `itinerary_days(itinerary_id FK, day_index, date, payload JSONB)`
+- `validation_results(itinerary_id FK, valid boolean, issues JSONB, warnings JSONB, checked_at)`
+- `trip_events(event_id PK, trip_id FK, event_type, payload JSONB, received_at, processed_at)`
+- `user_preferences(user_id FK, key, value, confidence, last_confirmed_at)` — long-term memory store
+- Redis: ephemeral conversation state, in-flight parallel-agent fan-out/fan-in coordination, rate-limit counters, provider response cache with freshness timestamps.
+
+## 16. Memory Architecture
+
+Three explicitly separated scopes — never mixed:
+
+1. **Short-term memory** — current conversation turn context only; discarded at session end.
+2. **Trip memory** — everything specific to the active `TripSession`; persists for the life of the trip.
+3. **Long-term preference memory** — stable cross-trip traits (e.g., "prefers mid-range hotels," "prefers morning departures," "into photography," "prefers balanced pacing"), written only when a preference is confirmed, not merely inferred once.
+
+## 17. Requirement Interview Algorithm
+
+1. Parse the latest user utterance into candidate field updates via the Requirement Interview Agent.
+2. Merge into `TripSession`, tagging each field `known | inferred | missing` and `hard | soft`.
+3. Score each missing field by **expected planning impact** (e.g., dates and budget dominate; "scenic-route preference" is low-impact until later).
+4. Ask exactly one question — the highest-scoring missing field — unless the user has volunteered several fields in one turn, in which case accept all of them before asking again.
+5. Stop interviewing once a minimum viable set exists (destination, origin, approximate dates or flexible window, duration or return constraint, budget or budget-agnostic flag, traveler count) — everything else can be asked opportunistically or defaulted with disclosed assumptions.
+
+## 18. Constraint Model
+
+**Hard constraints** (must be satisfied; a plan violating one is invalid, e.g.):
+`budget ≤ ₹80,000`, `duration = 7 days`, `travelers = 2`, `return_by ≤ specified_date`, `max_transfers ≤ 1`.
+
+**Soft preferences** (scored, traded off, not required, e.g.):
+prefer morning travel, prefer scenic routes, prefer central hotels, prefer photography-friendly stops, prefer fewer transfers.
+
+## 19. Optimization Strategy
+
+Frame itinerary selection as a constrained optimization problem:
+
+```
+minimize:  cost + travel_time + backtracking + schedule_risk + preference_penalty
+subject to: budget, duration, opening_hours, transport_schedules,
+            hotel_availability, time_windows, user_constraints
+```
+
+- Use a constraint/optimization solver (e.g., Google OR-Tools CP-SAT) over candidate itinerary graphs rather than asking an LLM to "figure out" scheduling.
+- The LLM's role is to **interpret and explain** solver output — never to search the solution space itself.
+- Instead of one "best" plan, generate three labeled variants — **cost-optimized, time-optimized, experience-optimized** — and let the Itinerary Planner Agent narrate the trade-offs in plain language.
+
+## 20. Itinerary Generation
+
+Inputs: validated requirements + Transport/Accommodation/Activities/Weather/Budget/Risk outputs.
+Process: build a candidate activity/transport graph per day → run the solver against Section 19's objective → attach cost, travel time, and weather annotations per day → emit `ItineraryDay[]`.
+Weather is structural, not decorative: a forecast of severe weather on a given day feeds back into the graph *before* scheduling, e.g. moving an outdoor activity earlier and substituting an indoor one on the affected day, rather than appending a weather paragraph after the fact.
+
+## 21. Validation
+
+The Validation Agent never trusts the Itinerary Planner's self-report. It independently re-derives and checks:
+
+dates and times · travel durations · hotel check-in/out compatibility · opening hours · transport schedule feasibility · budget totals (recomputed, not copied) · weather compatibility · geographic efficiency (no needless backtracking) · overlapping activities · buffer adequacy · data freshness (timestamps on every source).
+
+Output contract:
+```json
+{ "valid": true, "issues": [], "warnings": [] }
+```
+A `false` result includes structured `issues` (blocking) separately from `warnings` (non-blocking), so the Replanning Agent knows exactly what must change versus what's merely suboptimal.
+
+## 22. Replanning
+
+```
+Event / validation failure
+        ↓
+Impact analysis — which itinerary items are actually affected?
+        ↓
+Repair only the affected slice (e.g., one day, one leg)
+        ↓
+Re-validate the whole itinerary (cheap check) before returning it
+```
+
+Full regeneration is a last resort, only when impact analysis shows the affected surface exceeds a threshold (e.g., destination change, budget cut below feasibility).
+
+## 23. Live Trip Monitoring
+
+Once a trip is confirmed, the Orchestrator subscribes to typed events rather than polling: `FLIGHT_DELAYED`, `WEATHER_CHANGED`, `HOTEL_UNAVAILABLE`, `ACTIVITY_CANCELLED`, `USER_LATE`, `BUDGET_CHANGED`. Monitoring is event-driven — the system reacts only when something changes, not on a fixed schedule, which keeps API cost and noise low.
+
+## 24. Event Architecture
+
+- Events land in `trip_events` with a typed `event_type` and JSON `payload`.
+- A lightweight dispatcher routes each event type to the impact-analysis subroutine appropriate for it (a flight delay touches the transport leg and everything downstream of it; a hotel cancellation touches only that night's lodging and adjacent-day logistics).
+- Idempotency: each event is processed at most once (`processed_at` guard) so retried webhooks don't trigger duplicate replans.
+
+## 25. Error Handling
+
+- **Retries** with exponential backoff for transient provider failures.
+- **Timeouts** per tool call, with a hard ceiling on total planning latency.
+- **Provider fallbacks** — a secondary data source per capability where available.
+- **Caching** with explicit freshness timestamps; stale cache is served only with a `warnings` flag, never silently as fresh.
+- **Structured outputs everywhere** — Pydantic validation rejects malformed agent output before it reaches state.
+- **Graceful degradation** — if a specialist agent fails, the Orchestrator proceeds with reduced confidence and a visible warning rather than blocking the whole plan.
+
+## 26. Security
+
+- Location is obtained only via explicit device/browser permission; the backend never requests it independently of a user-visible prompt.
+- Data minimization — only fields needed for the current planning stage are requested or retained.
+- API keys and provider credentials are managed through a secrets manager, never embedded in agent prompts or logs.
+- Tool permission boundaries — each agent can call only the tools its role requires (Transport Agent cannot call `search_hotels`, etc.).
+- Prompt-injection protection on any untrusted external content (scraped reviews, web pages) before it reaches an LLM context.
+- **No autonomous financial transactions.** Booking, payment, and cancellation always require explicit, itemized human approval.
+
+## 27. Observability
+
+```
+Trip
+ ├── Orchestrator
+ ├── Requirement Agent
+ ├── Transport Agent
+ │    ├── Flight Tool
+ │    └── Rail Tool
+ ├── Hotel Agent
+ ├── Weather Agent
+ ├── Activities Agent
+ ├── Itinerary Agent
+ └── Validator
+```
+
+Tracked per node: latency, token usage, cost, tool-call count, retries, failures, validation-failure rate, replanning frequency, recovery success rate, constraint-satisfaction rate. This trace tree is the backbone of both debugging and the evaluation framework below.
+
+## 28. Evaluation Framework
+
+Automated benchmark across 14 scenarios: budget trip, luxury trip, family trip, solo trip, flexible dates, train-only, flight-only, weather disruption, flight delay, hotel cancellation, budget reduction, additional travel day, destination change mid-planning, provider API failure.
+
+Metrics, with deterministic assertions wherever possible: requirement-completion rate, constraint-satisfaction rate, factual grounding (no unsupported claims), itinerary feasibility, budget accuracy (recomputed vs. reported), API efficiency (calls per completed plan), end-to-end latency, replanning success rate, recovery rate after simulated failures.
+
+## 29. Testing
+
+- **Unit tests** per agent, mocking tool responses to assert routing and output-contract shape.
+- **Contract tests** for every MCP tool (schema in/out, error shapes).
+- **Golden-path integration tests** using the 14 evaluation scenarios as fixtures.
+- **Chaos tests** — inject provider timeouts and malformed responses to verify graceful degradation, not crashes.
+- **Replanning regression tests** — assert that a replan touches only the expected slice of the itinerary (catches accidental full-regeneration bugs).
+
+## 30. Deployment
+
+- Stateless FastAPI service instances behind a load balancer; LangGraph execution state persisted in PostgreSQL/Redis so any instance can resume a trip.
+- Background workers for event ingestion and long-running research fan-out.
+- Feature-flagged rollout for the Booking Agent given its elevated risk profile.
+- Blue/green deploys with contract-test gating before promoting a new agent version.
+
+## 31. Folder Structure
+
+```
+trip-planner/
+├── apps/
+│   ├── api/                 # FastAPI app, routers
+│   └── web/                 # React/Next.js frontend
+├── orchestrator/
+│   ├── graph.py             # LangGraph definition
+│   └── state.py             # TripSession, AgentTask models
+├── agents/
+│   ├── requirement_interview.py
+│   ├── location.py
+│   ├── transport.py
+│   ├── accommodation.py
+│   ├── activities.py
+│   ├── weather.py
+│   ├── budget.py
+│   ├── risk.py
+│   ├── itinerary_planner.py
+│   ├── validation.py
+│   ├── replanning.py
+│   └── booking.py
+├── tools/                   # MCP tool implementations
+├── solver/                  # OR-Tools constraint model
+├── db/                      # migrations, schema
+├── evaluation/              # 14-scenario benchmark harness
+└── infra/
+```
+
+## 32. API Design (representative)
+
+```
+POST   /trips                          create a trip session from an initial utterance
+POST   /trips/{id}/messages            continue the interview / send user reply
+POST   /trips/{id}/location            submit device-approved coordinates
+GET    /trips/{id}                     current TripSession state
+POST   /trips/{id}/plan                trigger planning once requirements suffice
+GET    /trips/{id}/itineraries         list variants (cost/time/experience)
+POST   /trips/{id}/what-if             simulate a constraint change, non-destructive
+POST   /trips/{id}/events              ingest a live event (flight delay, etc.)
+POST   /trips/{id}/approve-booking     explicit human approval gate
+```
+
+## 33. Example JSON Schemas
+
+```json
+// Constraints
+{
+  "hard": { "budget_max": 80000, "currency": "INR", "duration_days": 7,
+            "travelers": 2, "return_by": "2026-10-20", "max_transfers": 1 },
+  "soft": { "prefer_morning_travel": true, "prefer_scenic_route": true,
+            "prefer_photography": true }
+}
+
+// Validation result
+{ "valid": false,
+  "issues": [{ "code": "HOTEL_CHECKIN_CONFLICT", "day": 3,
+               "detail": "Arrival 23:40, hotel check-in closes 22:00" }],
+  "warnings": [{ "code": "WEATHER_LOW_CONFIDENCE", "day": 5 }] }
+```
+
+## 34. End-to-End Ladakh Workflow (flagship demo)
+
+> *"Plan a 7-day Ladakh trip in October for 2 people from my current location under ₹80,000. I prefer shorter travel and photography."*
+
+1. Requests location permission → determines starting city.
+2. Collects the few unresolved requirements (dates already implied by "October," budget and travelers already given).
+3. Launches Transport, Accommodation, Activities, Weather, Budget, and Risk agents in parallel.
+4. Retrieves current transport options, weather outlook, and place data.
+5. Builds a candidate itinerary; the solver optimizes across cost, time, and photography-relevant clustering.
+6. Validator finds an impossible schedule (a same-day transfer that doesn't allow for check-in).
+7. Replanner fixes only the affected day.
+8. Validator approves the revised plan.
+9. Final itinerary is presented with cost/time/experience variants on a map.
+10. User confirms and the trip goes live.
+11. A `FLIGHT_DELAYED` event arrives mid-trip.
+12. Impact analysis determines only the arrival-day activities are affected.
+13. Only those items are replanned; the rest of the trip is untouched.
+14. Validator re-approves; the user receives an updated itinerary.
+
+## 35. MVP Roadmap
+
+Orchestrator + Requirement, Location, Transport, Accommodation, Itinerary Planner agents. Single-shot planning, no live monitoring yet. Goal: prove the interview → research → plan loop end-to-end.
+
+## 36. Advanced Roadmap
+
+Add Validation and Replanning agents, the constraint solver, deterministic Budget engine, full tool-contract observability, then Live Monitoring, event architecture, and what-if simulation. Booking Agent and multi-destination/collaborative trips come last, behind the human-approval gate.
+
+## 37. 10/10 Features Summary
+
+Multi-agent orchestration · real-time data grounding · constraint optimization · independent validation · automatic (partial) replanning · event-driven live monitoring · impact analysis before repair · what-if simulation · explainable cost/time/experience trade-offs · three-tier memory architecture · deterministic-over-generative arithmetic · full observability and an automated evaluation harness.
+
+## 38. Resume Bullet
+
+*"Designed and built a multi-agent (12-agent) travel planning platform on LangGraph/FastAPI that models trip planning as a constrained optimization problem, independently validates every generated itinerary, and automatically replans the affected portion of a trip in response to live events (flight delays, weather changes) — evaluated across a 14-scenario automated benchmark measuring constraint satisfaction, budget accuracy, and replanning recovery rate."*
+
+## 39. Interview Explanation
+
+*"I didn't want to build another AI itinerary generator — the market already has several strong ones (Mindtrip, Layla, Google's AI Mode). What none of them clearly do is validate their own output or keep it correct after the trip starts. So I split the system into narrow specialist agents behind a stateful orchestrator, moved all arithmetic and scheduling into a deterministic constraint solver, and added an independent validator that never trusts the planner's self-report. The interesting engineering problem wasn't 'can an LLM write an itinerary' — it's 'can the system prove the itinerary is actually feasible, and keep it that way when a flight gets delayed at 2am.'"*
+
+## 40. Future Extensions
+
+Multi-destination and multi-leg international trips · group/collaborative planning with shared constraints · carbon-aware routing options · richer accessibility modeling · proactive (not just reactive) re-optimization using predicted disruption probability · a marketplace of provider-specific tool plugins behind the same MCP contract.
+
+---
+
+## Sources & References
+
+- Google AI Mode "Canvas for Travel," AI-powered Flight/Hotel Deals, agentic booking expansion — TechCrunch, TechRadar, eWeek, Open Data Science coverage (Nov 2025–2026).
+- Mindtrip Flights (Sabre/PayPal partnership), Magic Camera — fast.io "Best AI for Travel Planning 2026," unite.ai comparison (2026).
+- Layla, Booking.com AI Trip Planner, Tripadvisor AI Trip Builder, Hopper, Expedia "Romie," Wanderlog — lumichats.com "Best AI Trip Planner 2026," unite.ai, heymondo.com travel-app roundups (2026).
+- Competitive claims are drawn from vendor product pages and independent 2026 reviews cited above; capabilities not found in these sources are labeled "not documented" rather than assumed absent.
+- OR-Tools (Google) — reference constraint-programming toolkit suggested for Section 19's optimization layer.
+- LangGraph, FastAPI, Pydantic, Model Context Protocol (MCP) — reference frameworks for the orchestration, API, validation, and tool layers respectively.

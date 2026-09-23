@@ -1,0 +1,42 @@
+from fastapi.testclient import TestClient
+
+from trip_planner import InMemoryTripSessionStore, TripOrchestrator
+from trip_planner.api.app import create_app
+
+
+def make_client():
+    orchestrator = TripOrchestrator(InMemoryTripSessionStore())
+    return TestClient(create_app(orchestrator))
+
+
+def test_health_endpoint():
+    response = make_client().get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_create_and_resume_trip_over_http():
+    client = make_client()
+    created = client.post("/trips", json={"user_id": "user-1", "destination": "Ladakh"})
+    trip_id = created.json()["session"]["trip_id"]
+
+    answered = client.post(
+        f"/trips/{trip_id}/messages",
+        json={"updates": {"origin": "Delhi"}},
+    )
+    fetched = client.get(f"/trips/{trip_id}")
+
+    assert created.status_code == 200
+    assert answered.status_code == 200
+    assert answered.json()["session"]["origin"]["name"] == "Delhi"
+    assert fetched.json()["origin"]["name"] == "Delhi"
+
+
+def test_missing_trip_returns_not_found():
+    response = make_client().post(
+        "/trips/missing/messages",
+        json={"updates": {"origin": "Delhi"}},
+    )
+
+    assert response.status_code == 404

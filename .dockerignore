@@ -1,0 +1,10 @@
+.git
+.pytest_cache
+.venv
+__pycache__
+*.pyc
+*.sqlite3
+tests
+examples
+agentic_trip_planner_docx
+agentic_trip_planning_platform_blueprint.pptx
