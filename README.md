@@ -325,6 +325,59 @@ provider failure, and typed static transport data.
 
 ## Traveler-facing chat interface
 
+### Road map and hotels
+
+### AI chat setup (Windows PowerShell)
+
+The browser chat uses the OpenAI Responses API to understand messages, save
+trip details, and draft a day-by-day suggested itinerary. In the same VS Code
+PowerShell terminal where you run Uvicorn, set your API key without writing it
+into a project file:
+
+```powershell
+$secureKey = Read-Host "OpenAI API key" -AsSecureString
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new("", $secureKey).Password
+Remove-Variable secureKey
+$env:OPENAI_MODEL = "gpt-4o-mini"
+python -m uvicorn trip_planner.api.app:app --reload
+```
+
+The key is used only by the Python server and is never sent to the browser.
+The browser reports a specific error if the key is absent, rejected, or rate
+limited. You need an OpenAI API account with model access and available usage.
+The itinerary is a suggestion; its activities and budget are not verified live
+prices or bookings. The map route and hotels are separate live data requests.
+
+For **guest ratings**, optionally configure a Google Places API (New) key in
+the same terminal before starting the server:
+
+```powershell
+$secureKey = Read-Host "Google Places API key" -AsSecureString
+$env:GOOGLE_PLACES_API_KEY = [System.Net.NetworkCredential]::new("", $secureKey).Password
+Remove-Variable secureKey
+```
+
+Enable Places API (New) and billing on your Google Cloud project first. The
+rated listings appear separately under the OpenStreetMap route map, linked to
+Google Maps with Google attribution; Google Places results are not drawn on
+the OpenStreetMap map. Without this key, the map still shows nearby hotel
+listings, but their guest ratings are marked unavailable. The Google Places
+queries can incur charges, so check your quota and pricing. Prices and room
+availability are not provided.
+
+After telling the chat your origin and destination, click **View road route and hotels**.
+The map shows a driving route, approximate distance and driving time, and named
+hotels sampled near six points along the route. Start the server with
+`python -m uvicorn trip_planner.api.app:app --reload` and open `/chat`.
+
+The feature needs an internet connection: it uses OpenStreetMap tiles,
+Nominatim geocoding, the public OSRM demo router, Overpass hotel data, and
+Leaflet from a CDN. It is intended for light local prototyping. Hotel markers
+are OpenStreetMap listings, not availability or prices; the time estimate does
+not include traffic, stops, or road closures. Public services may rate limit
+requests or be unavailable. Use dedicated providers for a deployed product.
+
+
 The API also includes a conversational interface for non-technical users. It
 does not require JSON, Python, or field names. Open:
 
